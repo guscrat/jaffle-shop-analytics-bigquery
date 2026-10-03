@@ -1,7 +1,7 @@
 [project]
 name = "dbt"
 version = "0.1.0"
-description = "Add your description here"
+description = "This is a python based dbt and bigquery project training using jaffle-shop public dataset"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
