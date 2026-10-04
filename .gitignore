@@ -12,3 +12,5 @@ logs/
 raw.duckdb
 jaffle_shop.duckdb
 .vscode/
+.secrets/
+.env
