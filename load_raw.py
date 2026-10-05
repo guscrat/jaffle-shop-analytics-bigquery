@@ -16,8 +16,8 @@ import pandas as pd
 import requests
 from google.cloud import bigquery
 
-# ---- ajusta aqui ----
-PROJECT = "jaffle-shop-bq"   # id do teu projeto sandbox no GCP
+# ---------------------
+PROJECT = "jaffle-shop-bq"   # id do projeto sandbox no GCP
 LOCATION = "US"              # sandbox roda em US (bate com o profiles.yml)
 # ---------------------
 

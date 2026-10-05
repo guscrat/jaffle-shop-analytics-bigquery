@@ -1,0 +1,20 @@
+services:
+  dbt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: dbt-bigquery-app
+
+    env_file:
+      - .env
+
+    volumes:
+      - .:/app
+      - ./profiles:/root/.dbt
+      - ./.secrets:/app/secrets:ro
+
+    working_dir: /app
+
+    command: uv run dbt debug
+    # command: sleep infinity
