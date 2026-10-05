@@ -2,8 +2,17 @@
 
 FROM python:3.12-slim
 
-# Instala o uv
+# Instala git (essencial para o dbt)
+RUN apt-get update \
+    && apt-get install -y git \
+    && rm -rf /var/lib/apt/lists/*
+
+    
+    # Instala o uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Sincronizar a .venv do root e runtime
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 
 WORKDIR /app
 
@@ -27,4 +36,4 @@ COPY . .
 RUN uv sync --frozen
 
 # Executa a aplicação usando o ambie criado pelo uv
-CMD ["uv", "run", "python", "main.py"]
+CMD ["uv", "run", "dbt", "debug"]
