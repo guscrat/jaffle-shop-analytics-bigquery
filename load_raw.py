@@ -10,6 +10,7 @@ Sandbox-safe: usa load jobs (não streaming, não DML).
 """
 
 import io
+import os
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -17,8 +18,8 @@ import requests
 from google.cloud import bigquery
 
 # ---------------------
-PROJECT = "jaffle-shop-bq"   # id do projeto sandbox no GCP
-LOCATION = "US"              # sandbox roda em US (bate com o profiles.yml)
+PROJECT = os.environ["GCP_PROJECT"]   # id do projeto sandbox no GCP
+LOCATION = "US"                       # sandbox roda em US (bate com o profiles.yml)
 # ---------------------
 
 BASE = "https://dbt-tutorial-public.s3.amazonaws.com"
