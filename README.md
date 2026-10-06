@@ -4,7 +4,8 @@ Projeto do curso dbt Fundamentals, originalmente rodado no dbt Cloud com
 Snowflake. Passou por duas migrações desde então: primeiro para **DuckDB
 local** (só para estudo, sem depender de warehouse na nuvem) e agora para o
 **sandbox do BigQuery**, então o setup precisa de alguns passos manuais antes
-do primeiro `dbt run`.
+do primeiro `dbt run`. O projeto também pode ser rodado via **Docker**
+(ver [Setup](#setup)).
 
 ## Resultado: dashboard de clientes
 
@@ -79,10 +80,10 @@ depois da migração (`stripe.payments` → `stripe.payment`).
 
 ### DuckDB → BigQuery
 
-O DuckDB é ótimo pra estudar dbt sem fricção, mas roda tudo num arquivo
+O DuckDB é ótimo para estudar dbt sem fricção, mas roda tudo num arquivo
 local — nenhuma das partes "de nuvem" de um projeto de dados real (auth,
 projeto/dataset, load jobs, etc.) aparece na prática. Migrei para o
-**sandbox do BigQuery** pra treinar com um warehouse de nuvem de verdade:
+**sandbox do BigQuery** para treinar com um warehouse de nuvem de verdade:
 
 - Autenticação via `gcloud auth application-default login` em vez de um
   arquivo de banco local.
@@ -99,6 +100,21 @@ projeto/dataset, load jobs, etc.) aparece na prática. Migrei para o
 O adapter trocou de `dbt-duckdb` para `dbt-bigquery`, e o profile passou a
 se chamar `jaffle_shop` (antes `default`).
 
+### Containerização com Docker
+
+Para não depender do Python/uv instalado na máquina, o projeto ganhou um
+`Dockerfile` e um `compose.yaml`. No container, a autenticação deixa de ser
+o login pessoal do `gcloud` e passa a ser uma **service account**:
+
+- O profile do container fica versionado em `profiles/profiles.yml`
+  (`method: service-account`), lendo projeto, dataset e caminho da chave de
+  variáveis de ambiente (`env_var(...)`) definidas no `.env`.
+- A chave JSON fica em `.secrets/sa.json`, montada como volume `read-only`
+  só em runtime. Ela é ignorada pelo `.gitignore` e pelo `.dockerignore`,
+  então nunca vai para o repositório nem para a imagem.
+- O `load_raw.py` passou a ler o projeto de `GCP_PROJECT` em vez de uma
+  constante fixa no código, para usar o mesmo projeto que o dbt.
+
 ## Arquitetura
 
 - **BigQuery (projeto sandbox)** — os dados brutos e as models materializadas
@@ -107,19 +123,44 @@ se chamar `jaffle_shop` (antes `default`).
 - Datasets `jaffle_shop` e `stripe` — contêm as tabelas brutas
   (`jaffle_shop.customers`, `jaffle_shop.orders`, `stripe.payment`),
   recriadas pelo `load_raw.py` via load job (`WRITE_TRUNCATE`).
-- As models de staging/marts do dbt são materializadas no mesmo projeto,
-  conforme o `dataset`/`schema` configurado no `profiles.yml`.
+- As models de staging/marts do dbt são materializadas no mesmo projeto, no
+  `dataset` configurado no `profiles.yml`. Use um dataset **separado** dos
+  dados brutos (ex.: `dbt_dev`), para não misturar models com tabelas raw.
 
 ## Setup
 
-### 1. Instalar as dependências
+Há duas formas de rodar o projeto, e cada uma autentica no BigQuery de um
+jeito:
+
+| | Docker | Local |
+|---|---|---|
+| Autenticação | service account (`.secrets/sa.json`) | seu login (`gcloud auth application-default login`) |
+| Profile do dbt | `profiles/profiles.yml` (versionado) | `~/.dbt/profiles.yml` (fora do repositório) |
+| Dependências | dentro da imagem | `uv sync` na sua máquina |
+
+### Opção A: Docker
+
+O passo a passo completo está no **[README.Docker.md](README.Docker.md)**.
+Em resumo:
+
+```bash
+cp .env.example .env              # preencha GCP_PROJECT e GCP_DATASET
+# copie a chave da service account para .secrets/sa.json
+docker compose up --build         # build + dbt debug
+docker compose run --rm dbt uv run load_raw.py
+docker compose run --rm dbt uv run dbt build
+```
+
+### Opção B: Local
+
+#### 1. Instalar as dependências
 
 ```bash
 uv sync
 source .venv/bin/activate
 ```
 
-### 2. Autenticar no GCP
+#### 2. Autenticar no GCP
 
 ```bash
 gcloud auth application-default login
@@ -139,13 +180,15 @@ BigQuery neste projeto:
 - o dbt, porque o `profiles.yml` usa `method: oauth`, que também delega
   para as ADC.
 
-Ou seja, nenhuma chave de service account é versionada no repositório:
-tanto o script de carga quanto o dbt reaproveitam o login feito uma única
-vez com o `gcloud`.
+> No Docker o `load_raw.py` é o mesmo: as ADC procuram primeiro a variável
+> `GOOGLE_APPLICATION_CREDENTIALS`, que o `.env` aponta para a chave da
+> service account. Por isso o script funciona nos dois modos sem mudar
+> nada no código.
 
-### 3. Configurar o `profiles.yml`
+#### 3. Configurar o `profiles.yml`
 
-O dbt lê o profile em `~/.dbt/profiles.yml` (fora do repositório). Crie/edite
+Localmente o dbt lê o profile em `~/.dbt/profiles.yml` (fora do
+repositório; o `profiles/profiles.yml` versionado é o do Docker). Crie/edite
 esse arquivo com:
 
 ```yaml
@@ -155,33 +198,31 @@ jaffle_shop:
     dev:
       type: bigquery
       method: oauth
-      project: jaffle-shop-bq   # id do teu projeto sandbox no GCP
-      dataset: jaffle_shop
+      project: jaffle-shop-bq   # id do seu projeto sandbox no GCP
+      dataset: dbt_dev          # dataset das models (separado dos dados brutos)
       location: US
       threads: 4
 ```
 
-> Ajuste `project` para o id do teu projeto sandbox — o mesmo valor usado na
-> constante `PROJECT` de `load_raw.py`.
-
-### 4. Carregar os dados brutos
+#### 4. Carregar os dados brutos
 
 Os dados fonte (customers, orders, payments) não vêm com o repositório.
-Rode o script abaixo para baixá-los e populá-los no BigQuery:
+O `load_raw.py` lê o id do projeto da variável `GCP_PROJECT`, que deve ser
+o mesmo `project` do `profiles.yml`:
 
 ```bash
+export GCP_PROJECT=jaffle-shop-bq
 python load_raw.py
 ```
 
 Isso cria os datasets `jaffle_shop` e `stripe` no projeto configurado, com
 as tabelas esperadas pelos sources em `models/staging/*/`.
 
-### 5. Rodar o dbt
+#### 5. Rodar o dbt
 
 ```bash
 dbt debug   # confere se o adapter/profile foram encontrados
-dbt run
-dbt test
+dbt build   # roda models e testes na ordem do DAG
 ```
 
 ## Orquestração
@@ -190,10 +231,10 @@ Este projeto também é orquestrado via Airflow no repositório
 [`airflow-lab`](https://github.com/guscrat/airflow-lab), que encadeia
 `load_raw.py -> dbt run -> dbt test` como um DAG.
 
-## Resources
+## Links úteis
 
-- Learn more about dbt [in the docs](https://docs.getdbt.com/docs/introduction)
-- Check out [Discourse](https://discourse.getdbt.com/) for commonly asked questions and answers
-- Join the [dbt community](https://getdbt.com/community) to learn from other analytics engineers
-- Find [dbt events](https://events.getdbt.com) near you
-- Check out [the blog](https://blog.getdbt.com/) for the latest news on dbt's development and best practices
+- [Documentação do dbt](https://docs.getdbt.com/docs/introduction)
+- [Discourse do dbt](https://discourse.getdbt.com/) — perguntas e respostas frequentes
+- [Comunidade dbt](https://getdbt.com/community)
+- [Eventos do dbt](https://events.getdbt.com)
+- [Blog do dbt](https://blog.getdbt.com/) — novidades e boas práticas
